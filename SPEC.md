@@ -1,8 +1,30 @@
 # ZTLNP Protocol Specification
 
-**Version:** 1.0  
-**Status:** Informational  
+```
+Working Group:   ZTLNP                          Category: Experimental
+Internet-Draft:  draft-ztlnp-protocol-01        ISSN: (pending)
+Intended Status: Proposed Standard
+Expires:         October 2026
+Created:         April 2026
+```
+
+**Title:**  Zero Trust Local Network Protocol (ZTLNP), Version 1  
+**Status:** DRAFT — open for community review and comment  
+**Revision:** 01  
 **Authors:** ZTLNP Project  
+**Repository:** https://github.com/dnlkilonzi-pixel/ZTLNP  
+**Companion documents:**
+- [Threat Model](docs/threat-model.md)
+- [Performance Benchmarks](docs/performance-benchmarks.md)
+- [Security Analysis](docs/security-analysis.md)
+
+---
+
+> **Copyright Notice**
+>
+> This document is released under the Creative Commons Attribution 4.0
+> International License (CC BY 4.0).  Implementations are free to adopt
+> this specification without royalty.
 
 ---
 
@@ -14,6 +36,29 @@ integrity, replay protection, and trust management for packet-level
 communication between identified devices.  Unlike traditional LAN protocols,
 ZTLNP trusts nothing by default: every packet must carry a cryptographic proof
 of origin regardless of where it originated on the network.
+
+---
+
+## Status of This Memo
+
+This is an Internet-Draft in the spirit of the IETF process, but produced
+outside the IETF.  It is submitted for informational purposes and community
+review.  Distribution is unlimited.
+
+Internet-Drafts are working documents.  They may be updated, replaced, or
+obsoleted by other documents at any time.  It is inappropriate to use
+Internet-Drafts as reference material or to cite them other than as
+"work in progress."
+
+---
+
+## Requirements Language
+
+The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT",
+"SHOULD", "SHOULD NOT", "RECOMMENDED", "NOT RECOMMENDED", "MAY", and
+"OPTIONAL" in this document are to be interpreted as described in
+[BCP 14] (RFC 2119, RFC 8174) when, and only when, they appear in all
+capitals, as shown here.
 
 ---
 
@@ -35,6 +80,11 @@ of origin regardless of where it originated on the network.
 14. Security Considerations
 15. Threat Model
 16. Formal Security Properties
+17. IANA Considerations
+18. References
+19. Appendix A: Test Vectors
+20. Appendix B: Known Limitations
+21. Appendix C: Change Log
 
 ---
 
@@ -716,27 +766,141 @@ ensures each transition is accepted exactly once.
 
 ---
 
+## 17. IANA Considerations
+
+This document currently makes no request of IANA.
+
+If ZTLNP is submitted to the IETF for standardisation, the following
+registries would be sought:
+
+- A new "ZTLNP Packet Types" sub-registry (Section 5).
+- A new "ZTLNP Packet Flags" sub-registry (Section 4.1).
+- A new "ZTLNP Trust Levels" sub-registry (Section 9.1).
+- An assigned UDP port number for `UdpTransport`.
+
+---
+
+## 18. References
+
+### 18.1 Normative References
+
+```
+[RFC2119]  Bradner, S., "Key words for use in RFCs to Indicate
+           Requirement Levels", BCP 14, RFC 2119, March 1997.
+
+[RFC8174]  Leiba, B., "Ambiguity of Uppercase vs Lowercase in
+           RFC 2119 Key Words", BCP 14, RFC 8174, May 2017.
+
+[RFC7748]  Langley, A., Hamburg, M., and S. Turner, "Elliptic Curves
+           for Security", RFC 7748, January 2016.
+           (X25519 / Curve25519)
+
+[RFC8032]  Josefsson, S. and I. Liusvaara, "Edwards-Curve Digital
+           Signature Algorithm (EdDSA)", RFC 8032, January 2017.
+           (Ed25519)
+
+[RFC5869]  Krawczyk, H. and P. Eronen, "HMAC-based Extract-and-Expand
+           Key Derivation Function (HKDF)", RFC 5869, May 2010.
+
+[NIST-GCM] Dworkin, M., "Recommendation for Block Cipher Modes of
+           Operation: Galois/Counter Mode (GCM) and GMAC",
+           NIST Special Publication 800-38D, November 2007.
+
+[RFC2104]  Krawczyk, H., Bellare, M., and R. Canetti, "HMAC:
+           Keyed-Hashing for Message Authentication",
+           RFC 2104, February 1997.
+```
+
+### 18.2 Informative References
+
+```
+[WireGuard] Donenfeld, J., "WireGuard: Next Generation Kernel Network
+            Tunnel", NDSS 2017.
+
+[ZeroTrust] Rose, S. et al., "Zero Trust Architecture",
+            NIST SP 800-207, August 2020.
+
+[ProVerif]  Blanchet, B., "Proverif: Cryptographic Protocol Verifier
+            in the Formal Model", https://proverif.inria.fr/
+
+[Tamarin]   Basin, D. et al., "The TAMARIN Prover for the Symbolic
+            Analysis of Security Protocols", CAV 2013.
+
+[RFC6347]   Rescorla, E. and N. Modadugu, "Datagram Transport Layer
+            Security Version 1.2", RFC 6347, January 2012.
+
+[RFC9000]   Iyengar, J. and M. Thomson, "QUIC: A UDP-Based Multiplexed
+            and Secure Transport", RFC 9000, May 2021.
+
+[RFC2018]   Mathis, M. et al., "TCP Selective Acknowledgment Options",
+            RFC 2018, October 1996.
+```
+
+---
+
 ## Appendix A: Test Vectors
 
-*To be populated in a future revision when reference implementations are
-available for cross-compatibility testing.*
+### A.1 HKDF Key Derivation
+
+The following vectors allow cross-implementation compatibility testing.
+All values are hex-encoded.
+
+```
+IKM (X25519 shared secret, 32 B):
+  000102030405060708090a0b0c0d0e0f
+  101112131415161718191a1b1c1d1e1f
+
+initiator_id (32 B):
+  a0a1a2a3a4a5a6a7a8a9aaabacadaeaf
+  b0b1b2b3b4b5b6b7b8b9babbbcbdbebf
+
+responder_id (32 B):
+  c0c1c2c3c4c5c6c7c8c9cacbcccdcecf
+  d0d1d2d3d4d5d6d7d8d9dadbdcdddedf
+
+session_key = HKDF-SHA-256(IKM, salt="", info=b"ZTLNP-v1-session-key" + initiator_id + responder_id, L=32)
+  [to be computed and published in a future revision]
+
+mac_key = HKDF-SHA-256(IKM, salt="", info=b"ZTLNP-v1-mac-key" + initiator_id + responder_id, L=64)
+  [to be computed and published in a future revision]
+```
+
+> **Note**: Full test vectors (HELLO exchange, key derivation, DATA packet
+> encode/decode, signature verification) will be added in revision 02 when
+> a second independent implementation is available for cross-testing.
 
 ---
 
 ## Appendix B: Known Limitations
 
-1. **No algorithm negotiation**: all implementations must use the exact
-   algorithms specified in Section 3.
-2. **No multi-party sessions**: sessions are strictly pairwise.
+1. **No algorithm negotiation**: all implementations MUST use the exact
+   algorithms specified in Section 3.  A future version SHOULD define a
+   cipher-suite negotiation sub-protocol.
+2. **No multi-party sessions**: sessions are strictly pairwise.  Group
+   key agreement (e.g. for multicast) is out of scope for this version.
 3. **32-bit sequence numbers**: wrap-around occurs after ~4 billion packets
-   per session.  Long-lived sessions should initiate re-keying before this
-   limit is approached.
-4. **Padding overhead**: the 255-byte maximum padding limit per-packet means
-   that payloads larger than 255 bytes above the target MTU cannot be padded
-   to a fixed size using a single padding segment.
-5. **Cover traffic at scale**: generating cover traffic at a fixed rate is
-   only effective if all peers participate.  Selective deployment leaks which
-   devices have enabled cover traffic.
+   per session.  Long-lived sessions SHOULD initiate re-keying before
+   approaching this limit.
+4. **Padding overhead**: the 255-byte maximum padding per packet means that
+   payloads larger than 255 bytes above the target MTU cannot be fixed-padded
+   using a single padding segment.  Callers SHOULD size MTU budgets
+   accordingly.
+5. **Cover traffic at scale**: cover traffic is only effective when all peers
+   participate.  Selective deployment reveals which devices have it enabled.
+6. **No built-in PKI**: ZTLNP relies on out-of-band channels (QR, phone) for
+   initial key verification.  A PKI or certificate-transparency integration
+   would reduce the operator burden for large deployments.
+7. **No fragmentation**: ZTLNP does not fragment packets larger than the
+   transport MTU.  Applications are responsible for payload segmentation.
+
+---
+
+## Appendix C: Change Log
+
+| Revision | Date | Changes |
+|----------|------|---------|
+| 00 | 2025-Q4 | Initial internal draft — core handshake, wire format, state machine |
+| 01 | 2026-04 | Added trust bootstrap (TOFU/QR/web-of-trust), transport abstraction, mesh routing, stop-and-wait ARQ, MAC optimization (v2 features); added identity rotation, sliding-window ARQ + SACK, traffic analysis resistance (v3 features); reformatted as Draft RFC with Status of This Memo, Requirements Language, IANA Considerations, References |
 
 ---
 
