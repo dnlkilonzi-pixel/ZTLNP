@@ -176,6 +176,82 @@ class CryptoEngine:
         hkdf = HKDF(algorithm=SHA256(), length=32, salt=None, info=info)
         return hkdf.derive(shared_secret)
 
+    @staticmethod
+    def derive_mac_key(
+        shared_secret: bytes,
+        initiator_id: bytes,
+        responder_id: bytes,
+    ) -> bytes:
+        """
+        Derive a 64-byte HMAC-SHA-512 MAC key from an X25519 shared secret.
+
+        Uses a different HKDF info string than :meth:`derive_session_key` so
+        the two keys are cryptographically independent.  The MAC key is used
+        by the MAC_AUTH fast-path (DATA packets in established sessions) to
+        replace the slower Ed25519 per-packet signature with HMAC-SHA-512.
+
+        Parameters
+        ----------
+        shared_secret:
+            32-byte output of :meth:`x25519_exchange`.
+        initiator_id:
+            32-byte device identifier of the session initiator.
+        responder_id:
+            32-byte device identifier of the session responder.
+        """
+        info = b"ZTLNP-v1-mac-key" + initiator_id + responder_id
+        hkdf = HKDF(algorithm=SHA256(), length=64, salt=None, info=info)
+        return hkdf.derive(shared_secret)
+
+    # ------------------------------------------------------------------
+    # HMAC-SHA-512 (fast per-packet MAC for established sessions)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def compute_mac(mac_key: bytes, data: bytes) -> bytes:
+        """
+        Compute a 64-byte HMAC-SHA-512 over *data*.
+
+        Parameters
+        ----------
+        mac_key:
+            64-byte key derived by :meth:`derive_mac_key`.
+        data:
+            Bytes to authenticate.
+
+        Returns
+        -------
+        bytes
+            64-byte MAC tag.
+        """
+        from cryptography.hazmat.primitives.hmac import HMAC
+        from cryptography.hazmat.primitives.hashes import SHA512
+
+        h = HMAC(mac_key, SHA512())
+        h.update(data)
+        return h.finalize()
+
+    @staticmethod
+    def verify_mac(mac_key: bytes, data: bytes, tag: bytes) -> bool:
+        """
+        Verify a 64-byte HMAC-SHA-512 tag.
+
+        Returns
+        -------
+        bool
+            ``True`` if the tag is valid, ``False`` otherwise.
+        """
+        from cryptography.hazmat.primitives.hmac import HMAC
+        from cryptography.hazmat.primitives.hashes import SHA512
+
+        try:
+            h = HMAC(mac_key, SHA512())
+            h.update(data)
+            h.verify(tag)
+            return True
+        except InvalidSignature:
+            return False
+
     # ------------------------------------------------------------------
     # AES-256-GCM authenticated encryption
     # ------------------------------------------------------------------
@@ -262,3 +338,21 @@ class CryptoEngine:
             packet.signed_bytes(),
             packet.signature,
         )
+
+    @staticmethod
+    def mac_packet(mac_key: bytes, packet: "Packet") -> bytes:  # noqa: F821
+        """
+        Return the 64-byte HMAC-SHA-512 tag over the packet's signed bytes.
+
+        Used for the MAC_AUTH fast-path: DATA packets in established sessions
+        use this cheaper operation instead of the full Ed25519 sign.
+        """
+        return CryptoEngine.compute_mac(mac_key, packet.signed_bytes())
+
+    @staticmethod
+    def verify_packet_mac(mac_key: bytes, packet: "Packet") -> bool:  # noqa: F821
+        """
+        Verify the HMAC-SHA-512 tag carried in a MAC_AUTH packet's signature
+        field.
+        """
+        return CryptoEngine.verify_mac(mac_key, packet.signed_bytes(), packet.signature)

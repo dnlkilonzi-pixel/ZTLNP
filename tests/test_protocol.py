@@ -247,6 +247,7 @@ class TestReplayPrevention:
             peer_id=b"\x01" * 32,
             peer_ed25519_public=b"\x02" * 32,
             session_key=b"\x03" * 32,
+            mac_key=b"\x04" * 64,
         )
         stale_ts = int(time.time() * 1000) - (MAX_CLOCK_SKEW_MS + 1_000)
         with pytest.raises(ReplayAttackError, match="timestamp"):
@@ -257,6 +258,7 @@ class TestReplayPrevention:
             peer_id=b"\x01" * 32,
             peer_ed25519_public=b"\x02" * 32,
             session_key=b"\x03" * 32,
+            mac_key=b"\x04" * 64,
         )
         future_ts = int(time.time() * 1000) + (MAX_CLOCK_SKEW_MS + 1_000)
         with pytest.raises(ReplayAttackError, match="timestamp"):
@@ -267,6 +269,7 @@ class TestReplayPrevention:
             peer_id=b"\x01" * 32,
             peer_ed25519_public=b"\x02" * 32,
             session_key=b"\x03" * 32,
+            mac_key=b"\x04" * 64,
         )
         now_ms = int(time.time() * 1000)
         # Advance the window to sequence 100.

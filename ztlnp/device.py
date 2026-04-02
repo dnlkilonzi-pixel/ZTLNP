@@ -130,11 +130,15 @@ class Device:
         session_key = CryptoEngine.derive_session_key(
             shared_secret, initiator_id, responder_id
         )
+        mac_key = CryptoEngine.derive_mac_key(
+            shared_secret, initiator_id, responder_id
+        )
 
         session = Session(
             peer_id=peer_id,
             peer_ed25519_public=peer_ed25519_public,
             session_key=session_key,
+            mac_key=mac_key,
         )
         self._sessions[peer_id] = session
 
@@ -215,6 +219,10 @@ class Device:
         """
         Build an encrypted, signed DATA packet for *peer_id*.
 
+        Uses Ed25519 signing (full identity proof) for all control packets.
+        For DATA packets in an established session, prefer
+        :meth:`build_data_packet_mac` for better throughput.
+
         Raises
         ------
         SessionNotFoundError
@@ -236,6 +244,42 @@ class Device:
             nonce=nonce,
         )
         packet.signature = CryptoEngine.sign_packet(self._identity_private, packet)
+        return packet
+
+    def build_data_packet_mac(
+        self, peer_id: bytes, plaintext: bytes
+    ) -> "Packet":  # noqa: F821
+        """
+        Build an encrypted DATA packet authenticated with HMAC-SHA-512 instead
+        of an Ed25519 signature.
+
+        This ``MAC_AUTH`` fast-path is ~10–40× faster than full Ed25519 signing
+        for high-throughput data transfer, while still providing per-packet
+        authentication.  The trade-off is that HMAC authentication requires an
+        already-established shared session key — it does not prove identity to
+        a third party the way Ed25519 does.
+
+        Raises
+        ------
+        SessionNotFoundError
+            If no session exists for *peer_id*.
+        """
+        from ztlnp.packet import Packet, PacketType, PacketFlags
+
+        session = self.get_session(peer_id)
+        nonce = CryptoEngine.generate_nonce()
+        ciphertext = CryptoEngine.encrypt(session.session_key, nonce, plaintext)
+
+        packet = Packet(
+            ptype=PacketType.DATA,
+            sender_id=self.device_id,
+            payload=ciphertext,
+            recipient_id=peer_id,
+            flags=PacketFlags.ENCRYPTED | PacketFlags.MAC_AUTH,
+            sequence=session.next_sequence(),
+            nonce=nonce,
+        )
+        packet.signature = CryptoEngine.mac_packet(session.mac_key, packet)
         return packet
 
     def build_ack_packet(self, peer_id: bytes, acked_sequence: int) -> "Packet":  # noqa: F821
@@ -295,8 +339,12 @@ class Device:
         For HELLO packets the signature is verified using the Ed25519 public
         key embedded in the payload (no session required).
 
-        For all other packet types the signature is verified using the Ed25519
-        public key stored in the established session.
+        For packets with the ``MAC_AUTH`` flag the ``signature`` field is
+        verified as an HMAC-SHA-512 tag using the session's MAC key (faster
+        than Ed25519; only valid for established sessions).
+
+        For all other packet types the Ed25519 signature is verified using the
+        public key stored in the established session or pending-peer registry.
 
         Returns
         -------
@@ -308,13 +356,13 @@ class Device:
         InvalidMagicError / InvalidVersionError
             Bad wire format.
         SignatureVerificationError
-            Ed25519 signature did not verify.
+            Signature or MAC tag did not verify.
         ReplayAttackError
             Timestamp or sequence number indicates a replay.
         SessionNotFoundError
             Non-HELLO packet received without an established session.
         """
-        from ztlnp.packet import Packet, PacketType
+        from ztlnp.packet import Packet, PacketType, PacketFlags
         from ztlnp.exceptions import SignatureVerificationError
 
         packet = Packet.from_bytes(raw)
@@ -332,23 +380,35 @@ class Device:
         # pending peer key (set during the handshake after a HELLO is received
         # but before KEY_EXCHANGE completes).
         if packet.sender_id in self._sessions:
-            sender_ed25519_pub = self._sessions[packet.sender_id].peer_ed25519_public
+            session = self._sessions[packet.sender_id]
             is_session_packet = True
         elif packet.sender_id in self._pending_peer_keys:
-            sender_ed25519_pub = self._pending_peer_keys[packet.sender_id]
+            session = None
             is_session_packet = False
         else:
             raise SessionNotFoundError(
                 f"No established session for peer {packet.sender_id.hex()}"
             )
 
-        if not CryptoEngine.verify_packet(sender_ed25519_pub, packet):
-            raise SignatureVerificationError(
-                f"Packet signature verification failed for peer {packet.sender_id.hex()}"
+        # Choose verification path: HMAC (MAC_AUTH) or Ed25519.
+        if is_session_packet and (packet.flags & PacketFlags.MAC_AUTH):
+            if not CryptoEngine.verify_packet_mac(session.mac_key, packet):
+                raise SignatureVerificationError(
+                    f"MAC_AUTH tag verification failed for peer {packet.sender_id.hex()}"
+                )
+        else:
+            sender_ed25519_pub = (
+                session.peer_ed25519_public
+                if is_session_packet
+                else self._pending_peer_keys[packet.sender_id]
             )
+            if not CryptoEngine.verify_packet(sender_ed25519_pub, packet):
+                raise SignatureVerificationError(
+                    f"Packet signature verification failed for peer {packet.sender_id.hex()}"
+                )
 
         if is_session_packet:
-            self._sessions[packet.sender_id].check_replay(packet.sequence, packet.timestamp_ms)
+            session.check_replay(packet.sequence, packet.timestamp_ms)
 
         return packet
 

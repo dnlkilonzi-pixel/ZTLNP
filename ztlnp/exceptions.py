@@ -29,3 +29,15 @@ class SessionNotFoundError(ZTLNPError):
 
 class HandshakeError(ZTLNPError):
     """Key-exchange handshake could not be completed."""
+
+
+class TrustError(ZTLNPError):
+    """A trust-store operation failed (unknown peer, bad endorsement, etc.)."""
+
+
+class RoutingError(ZTLNPError):
+    """No route exists to the destination device."""
+
+
+class RetransmitError(ZTLNPError):
+    """Reliable delivery failed after exhausting all retransmission attempts."""

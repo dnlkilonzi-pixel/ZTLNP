@@ -42,18 +42,21 @@ BROADCAST_ID: bytes = b"\x00" * 32
 
 
 class PacketType(IntEnum):
-    HELLO = 0x01        # Advertise identity + ephemeral public key
-    KEY_EXCHANGE = 0x02  # Confirm derived session key
-    DATA = 0x03          # Encrypted application data
-    ACK = 0x04           # Acknowledge a DATA or KEY_EXCHANGE packet
-    ERROR = 0x05         # Signal a protocol error to the peer
-    BYE = 0x06           # Graceful session teardown
+    HELLO = 0x01            # Advertise identity + ephemeral public key
+    KEY_EXCHANGE = 0x02     # Confirm derived session key
+    DATA = 0x03             # Encrypted application data
+    ACK = 0x04              # Acknowledge a DATA or KEY_EXCHANGE packet
+    ERROR = 0x05            # Signal a protocol error to the peer
+    BYE = 0x06              # Graceful session teardown
+    ROUTE_ANNOUNCE = 0x07   # Mesh: advertise reachable device IDs
+    TRUST_ENDORSE = 0x08    # Web-of-trust: signed endorsement of a peer
 
 
 class PacketFlags(IntEnum):
     NONE = 0x0000
     ENCRYPTED = 0x0001   # Payload is AES-256-GCM ciphertext
     BROADCAST = 0x0002   # Addressed to all peers (recipient_id is all-zeros)
+    MAC_AUTH = 0x0004    # Signature field carries HMAC-SHA-512 (not Ed25519)
 
 
 @dataclass

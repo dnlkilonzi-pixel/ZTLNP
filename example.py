@@ -1,175 +1,272 @@
 #!/usr/bin/env python3
 """
-ZTLNP Demo — Zero Trust Local Network Protocol
-================================================
+ZTLNP Extended Demo — Next-Level Zero Trust Networking
+=======================================================
 
-This script demonstrates a complete ZTLNP session between two in-process
-"devices".  Every packet is signed with the sender's Ed25519 identity key and
-every payload is encrypted with AES-256-GCM — even though Alice and Bob are on
-the same machine.
+This script demonstrates all five protocol innovations:
 
-Concepts shown
---------------
-1. Device identity key generation
-2. Full HELLO → KEY_EXCHANGE handshake
-3. Authenticated, encrypted DATA exchange
-4. Replay-attack rejection
-5. Graceful session teardown (BYE)
+1. Trust Bootstrap  — TOFU → fingerprint → web-of-trust endorsement
+2. Transport Abstraction — protocol-agnostic; runs over InProcessTransport
+3. Mesh Routing    — identity-based forwarding through an intermediate node
+4. Reliability     — stop-and-wait ARQ with exponential-backoff retransmission
+5. MAC Optimization — HMAC-SHA-512 per packet instead of Ed25519 (faster)
 """
 
 from __future__ import annotations
 
+import struct
 import sys
 import time
 
 from ztlnp.device import Device
 from ztlnp.protocol import Protocol, ProtocolState
-from ztlnp.exceptions import ReplayAttackError, SignatureVerificationError
+from ztlnp.trust import (
+    TrustLevel, TrustStore, fingerprint_of,
+    encode_qr_payload, parse_qr_payload, create_endorsement,
+)
+from ztlnp.transport import InProcessTransport
+from ztlnp.router import Router
+from ztlnp.reliability import ReliableChannel
+from ztlnp.packet import PacketFlags
+from ztlnp.exceptions import ReplayAttackError, RetransmitError
 
 
-def banner(title: str) -> None:
-    print(f"\n{'=' * 60}")
+def banner(title):
+    print(f"\n{'=' * 64}")
     print(f"  {title}")
-    print(f"{'=' * 60}")
+    print(f"{'=' * 64}")
 
 
-def step(msg: str) -> None:
+def step(msg):
     print(f"\n[*] {msg}")
 
 
-def ok(msg: str) -> None:
-    print(f"    ✓  {msg}")
+def ok(msg):
+    print(f"    \u2713  {msg}")
 
 
-def warn(msg: str) -> None:
-    print(f"    ⚠  {msg}", file=sys.stderr)
+def _do_handshake(alice, bob):
+    h1 = alice.initiate(bob.local.device_id)
+    h2 = bob.process_incoming(h1)
+    k1 = alice.process_incoming(h2)
+    k2 = bob.process_incoming(k1)
+    alice.process_incoming(k2)
 
 
-# ---------------------------------------------------------------------------
-# 1. Create two devices
-# ---------------------------------------------------------------------------
+# ============================================================
+# Feature 1: Trust Bootstrap Layer
+# ============================================================
 
-banner("ZTLNP Demo")
+banner("Feature 1 \u2014 Trust Bootstrap Layer")
 
-step("Creating Alice and Bob…")
-alice_dev = Device("Alice")
+store = TrustStore(allow_tofu=True)
 bob_dev = Device("Bob")
-ok(f"Alice device ID: {alice_dev.device_id.hex()[:32]}…")
-ok(f"Bob   device ID: {bob_dev.device_id.hex()[:32]}…")
-ok("Both devices generated Ed25519 identity key pairs.")
 
-# ---------------------------------------------------------------------------
-# 2. Handshake
-# ---------------------------------------------------------------------------
+step("First contact: Trust-on-First-Use (TOFU)")
+rec = store.process_hello(bob_dev.device_id, bob_dev.identity_public_bytes)
+ok(f"Bob accepted via TOFU  (trust level: {rec.trust_level.name})")
 
-step("Starting HELLO → KEY_EXCHANGE handshake (zero implicit trust)…")
+step("Out-of-band fingerprint verification (phone call / QR scan)")
+fp = fingerprint_of(bob_dev.identity_public_bytes)
+ok(f"Bob's fingerprint: {fp}")
+upgraded = store.verify_fingerprint(bob_dev.device_id, fp)
+assert upgraded
+ok(f"Fingerprint confirmed \u2192 trust level: {store.get(bob_dev.device_id).trust_level.name}")
 
-alice = Protocol(alice_dev)
-bob = Protocol(bob_dev)
+step("QR-code-friendly key exchange for Charlie")
+charlie_dev = Device("Charlie")
+qr_payload = encode_qr_payload(charlie_dev.device_id, charlie_dev.identity_public_bytes)
+ok(f"QR payload: {qr_payload[:60]}\u2026")
+recovered_id, recovered_pub = parse_qr_payload(qr_payload)
+assert recovered_id == charlie_dev.device_id
+store.add(recovered_pub, TrustLevel.VERIFIED)
+ok("Charlie's key loaded from QR payload \u2192 VERIFIED")
 
-# Alice initiates.
-hello_from_alice = alice.initiate(bob_dev.device_id)
-ok(f"Alice → Bob  HELLO  ({len(hello_from_alice)} bytes)")
+step("Web-of-trust: Alice (VERIFIED) endorses Dave")
+alice_endorser = Device("Alice-endorser")
+store.add(alice_endorser.identity_public_bytes, TrustLevel.VERIFIED)
+dave_dev = Device("Dave")
+endorsement = create_endorsement(
+    alice_endorser._identity_private,
+    alice_endorser.device_id,
+    dave_dev.device_id,
+    dave_dev.identity_public_bytes,
+)
+ok(f"Endorsement blob: {len(endorsement)} bytes (signed by Alice)")
+rec = store.add_endorsement(endorsement, alice_endorser.device_id)
+ok(f"Dave accepted via web-of-trust \u2192 trust level: {rec.trust_level.name}")
+assert store.is_trusted(dave_dev.device_id)
 
-# Bob receives Alice's HELLO and sends its own.
-hello_from_bob = bob.process_incoming(hello_from_alice)
-ok(f"Bob   → Alice HELLO ({len(hello_from_bob)} bytes)")
 
-# Alice receives Bob's HELLO, completes key exchange, sends KEY_EXCHANGE.
-ke_from_alice = alice.process_incoming(hello_from_bob)
-ok(f"Alice → Bob  KEY_EXCHANGE ({len(ke_from_alice)} bytes)")
+# ============================================================
+# Feature 2: Transport Abstraction
+# ============================================================
 
-# Bob verifies KEY_EXCHANGE, completes its side, sends confirmation.
-ke_from_bob = bob.process_incoming(ke_from_alice)
-ok(f"Bob   → Alice KEY_EXCHANGE ({len(ke_from_bob)} bytes)")
+banner("Feature 2 \u2014 Transport Abstraction")
 
-# Alice receives confirmation.
-alice.process_incoming(ke_from_bob)
+step("Alice \u2194 Bob over InProcessTransport")
+alice_t, bob_t = InProcessTransport.create_pair(b"alice-addr", b"bob-addr")
+ok(f"Alice local address : {alice_t.local_addr}")
+ok(f"Bob   local address : {bob_t.local_addr}")
 
-assert alice.state == ProtocolState.ESTABLISHED
-assert bob.state == ProtocolState.ESTABLISHED
-ok("Handshake complete — both sides are in ESTABLISHED state.")
+alice2 = Protocol(Device("Alice"))
+bob2 = Protocol(Device("Bob"))
+_do_handshake(alice2, bob2)
 
-alice_session = alice_dev.get_session(bob_dev.device_id)
-bob_session = bob_dev.get_session(alice_dev.device_id)
-assert alice_session.session_key == bob_session.session_key
-ok(f"Shared session key: {alice_session.session_key.hex()[:32]}…")
-ok("Both sides derived the same AES-256-GCM session key via X25519 + HKDF.")
+data_wire = alice2.send_data(b"Transport-agnostic payload")
+alice_t.send(bob_t.local_addr, data_wire)
+src, received_wire = bob_t.recv(timeout=1.0)
+plaintext = bob2.receive_data(received_wire)
+ok(f"Message delivered over InProcessTransport: {plaintext.decode()!r}")
+ok("Same API works over UDP, BLE, LoRa, WebRTC \u2014 just swap the Transport.")
 
-# ---------------------------------------------------------------------------
-# 3. Authenticated, encrypted data exchange
-# ---------------------------------------------------------------------------
 
-banner("Authenticated & Encrypted Data Exchange")
+# ============================================================
+# Feature 3: Mesh Routing (identity-based forwarding)
+# ============================================================
 
-messages = [
-    b"Hello Bob, this message is signed and encrypted!",
-    b"Even on the same LAN, I trust nobody implicitly.",
-    b"Zero Trust means verify every single packet.",
-]
+banner("Feature 3 \u2014 Mesh Routing (Identity-Based Forwarding)")
 
-for i, plaintext in enumerate(messages, 1):
-    wire = alice.send_data(plaintext)
-    recovered = bob.receive_data(wire)
-    assert recovered == plaintext
-    step(f"Message {i}: Alice → Bob")
-    ok(f"Plaintext  : {plaintext.decode()}")
-    ok(f"Wire bytes : {wire.hex()[:64]}… ({len(wire)} bytes total)")
-    ok("Verified  : Ed25519 signature ✓  AES-256-GCM auth ✓  Replay check ✓")
+step("Three nodes: Alice \u2014 Bob (router) \u2014 Charlie")
 
-# ---------------------------------------------------------------------------
-# 4. Replay-attack rejection
-# ---------------------------------------------------------------------------
+alice_dev3 = Device("Alice")
+bob_router_dev = Device("Bob-Router")
+charlie_dev3 = Device("Charlie")
 
-banner("Replay-Attack Prevention")
+t_ab_a, t_ab_b = InProcessTransport.create_pair(b"alice", b"bob-router")
+t_bc_b, t_bc_c = InProcessTransport.create_pair(b"bob-router", b"charlie")
 
-step("Alice sends a DATA packet, Bob receives it normally…")
-wire = alice.send_data(b"legitimate packet")
-bob.receive_data(wire)
-ok("First delivery accepted.")
+router_alice = Router(alice_dev3.device_id)
+router_bob = Router(bob_router_dev.device_id)
 
-step("Attacker replays the same packet bytes to Bob…")
+router_alice.add_direct_route(bob_router_dev.device_id, t_ab_a, b"bob-router")
+router_bob.add_direct_route(alice_dev3.device_id, t_ab_b, b"alice")
+router_bob.add_direct_route(charlie_dev3.device_id, t_bc_b, b"charlie")
+
+announce_payload = router_bob.build_announce_payload()
+updated = router_alice.process_announce_payload(announce_payload, t_ab_a, b"bob-router")
+ok(f"Alice learned {len(updated)} route(s) from Bob's announcement")
+
+proto_alice3 = Protocol(alice_dev3)
+proto_charlie3 = Protocol(charlie_dev3)
+_do_handshake(proto_alice3, proto_charlie3)
+
+step("Alice \u2192 Bob (router) \u2192 Charlie: forwarding a DATA packet")
+data_bytes = proto_alice3.send_data(b"Routed zero-trust payload")
+router_alice.forward(data_bytes, charlie_dev3.device_id)
+_, forwarded = t_ab_b.recv(timeout=1.0)
+router_bob.forward(forwarded, charlie_dev3.device_id)
+_, final = t_bc_c.recv(timeout=1.0)
+plaintext = proto_charlie3.receive_data(final)
+ok(f"Charlie received: {plaintext.decode()!r}")
+ok("Packet traversed two hops; Charlie verified Alice's Ed25519 signature directly.")
+
+
+# ============================================================
+# Feature 4: Reliability (Stop-and-Wait ARQ)
+# ============================================================
+
+banner("Feature 4 \u2014 Reliable Delivery (Retransmission / ARQ)")
+
+alice4 = Protocol(Device("Alice4"))
+bob4 = Protocol(Device("Bob4"))
+_do_handshake(alice4, bob4)
+
+channel = ReliableChannel(alice4, base_timeout_ms=500, max_retries=3)
+
+step("Sending a message with ARQ tracking")
+seq, wire = channel.send(b"Important message")
+ok(f"Packet queued with sequence {seq}; pending: {channel.pending_count}")
+channel.process_ack(seq)
+ok(f"ACK received for seq {seq}; pending: {channel.pending_count}")
+assert channel.pending_count == 0
+
+step("Simulating packet loss and retransmission")
+seq2, _ = channel.send(b"Lost packet")
+channel._pending[seq2].sent_at = time.time() - 1.0
+retrans = channel.get_retransmissions()
+ok(f"{len(retrans)} retransmission generated; retry count: {channel._pending[seq2].retries}")
+
+step("Exhausting max_retries raises RetransmitError")
+short_channel = ReliableChannel(alice4, base_timeout_ms=500, max_retries=1)
+seq3, _ = short_channel.send(b"Will fail")
+short_channel._pending[seq3].sent_at = time.time() - 1.0
+short_channel.get_retransmissions()  # first retry
+short_channel._pending[seq3].sent_at = time.time() - 1.0
 try:
-    bob_dev.receive_packet(wire)
-    warn("BUG: replay was accepted!")
+    short_channel.get_retransmissions()
+    print("    \u2717  BUG: should have raised RetransmitError")
     sys.exit(1)
-except ReplayAttackError as exc:
-    ok(f"Replay correctly rejected: {exc}")
+except RetransmitError as exc:
+    ok(f"RetransmitError raised as expected: {exc}")
 
-# ---------------------------------------------------------------------------
-# 5. Tamper detection
-# ---------------------------------------------------------------------------
 
-banner("Tamper Detection")
+# ============================================================
+# Feature 5: MAC Optimization (HMAC-SHA-512 fast path)
+# ============================================================
 
-step("Alice sends a DATA packet; attacker flips a bit in the payload…")
-wire = bytearray(alice.send_data(b"tamper me"))
-wire[105] ^= 0xFF  # flip a bit somewhere in the payload
-try:
-    bob_dev.receive_packet(bytes(wire))
-    warn("BUG: tampered packet was accepted!")
-    sys.exit(1)
-except (SignatureVerificationError, Exception) as exc:
-    ok(f"Tampered packet rejected: {type(exc).__name__}")
+banner("Feature 5 \u2014 MAC Optimization (HMAC-SHA-512 Fast Path)")
 
-# ---------------------------------------------------------------------------
-# 6. Session teardown
-# ---------------------------------------------------------------------------
+alice5_dev = Device("Alice5")
+bob5_dev = Device("Bob5")
+alice5 = Protocol(alice5_dev)
+bob5 = Protocol(bob5_dev)
+_do_handshake(alice5, bob5)
 
-banner("Graceful Session Teardown (BYE)")
+step("Comparing Ed25519 vs HMAC-SHA-512 per-packet authentication")
+N = 500
 
-step("Alice sends a BYE packet to Bob…")
-bye_wire = alice_dev.build_bye_packet(bob_dev.device_id).to_bytes()
-bob.process_incoming(bye_wire)
-assert bob.state == ProtocolState.CLOSED
-ok("Bob closed the session after receiving BYE.")
-ok(f"Bob state: {bob.state.name}")
+t0 = time.perf_counter()
+for _ in range(N):
+    wire = alice5_dev.build_data_packet(bob5_dev.device_id, b"bench").to_bytes()
+    bob5_dev.receive_packet(wire)
+t_ed25519 = (time.perf_counter() - t0) * 1000 / N
 
-print()
-banner("Demo Complete — ZTLNP properties validated")
+t0 = time.perf_counter()
+for _ in range(N):
+    wire = alice5_dev.build_data_packet_mac(bob5_dev.device_id, b"bench").to_bytes()
+    bob5_dev.receive_packet(wire)
+t_mac = (time.perf_counter() - t0) * 1000 / N
+
+ok(f"Ed25519 sign+verify:     {t_ed25519:.3f} ms/packet")
+ok(f"HMAC-SHA-512 tag+verify: {t_mac:.3f} ms/packet")
+speedup = t_ed25519 / max(t_mac, 0.001)
+ok(f"Speedup: {speedup:.1f}\u00d7")
+
+step("Verifying MAC packet security")
+mac_packet = alice5_dev.build_data_packet_mac(bob5_dev.device_id, b"fast")
+assert mac_packet.flags & PacketFlags.MAC_AUTH
+ok("MAC_AUTH flag set on the packet")
+
+session = alice5_dev.get_session(bob5_dev.device_id)
+ok(f"Session MAC key: {session.mac_key.hex()[:32]}\u2026  (64 bytes, HKDF-independent)")
+plaintext_check = bob5_dev.decrypt_packet(bob5_dev.receive_packet(mac_packet.to_bytes()))
+assert plaintext_check == b"fast"
+ok("MAC-authenticated packet decrypted and verified correctly")
+
+
+# ============================================================
+# Summary
+# ============================================================
+
+banner("All Features Validated \u2014 ZTLNP v2 Summary")
 print("""
-  Every packet is authenticated with Ed25519 (per-packet verification).
-  Every payload is encrypted with AES-256-GCM.
-  Replay attacks are blocked by timestamp bounds + sequence-number windows.
-  Device identity is cryptographic (not IP/MAC-based) — zero implicit trust.
+  Feature 1 \u2014 Trust Bootstrap
+    \u2713 TOFU, fingerprint verification, QR key exchange
+    \u2713 Web-of-trust endorsements (signed vouchers from VERIFIED peers)
+
+  Feature 2 \u2014 Transport Abstraction
+    \u2713 Protocol runs unchanged over InProcessTransport, UDP, or any adapter
+
+  Feature 3 \u2014 Mesh Routing
+    \u2713 Packets forwarded by device identity (not IP)
+    \u2713 Route announcements propagate reachability; trust decays per hop
+
+  Feature 4 \u2014 Reliability (Stop-and-Wait ARQ)
+    \u2713 Pending-packet queue, exponential backoff, configurable max retries
+    \u2713 Caller-driven (no hidden threads)
+
+  Feature 5 \u2014 MAC Optimization
+    \u2713 DATA packets in established sessions use HMAC-SHA-512 (MAC_AUTH flag)
+    \u2713 Same wire format, same replay protection, significantly faster
 """)

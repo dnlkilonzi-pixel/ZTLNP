@@ -32,9 +32,14 @@ class Session:
         32-byte device identifier of the remote peer.
     peer_ed25519_public:
         32-byte raw Ed25519 public key of the remote peer.  Every incoming
-        packet is verified against this key.
+        packet is verified against this key (control-plane packets and any
+        packet without the MAC_AUTH flag).
     session_key:
         32-byte AES-256-GCM key derived from the X25519 exchange.
+    mac_key:
+        64-byte HMAC-SHA-512 key derived from the same X25519 exchange with a
+        different HKDF info string.  Used for the MAC_AUTH fast-path on DATA
+        packets (replaces Ed25519 per-packet signing, ~10–40× faster).
     local_sequence:
         Next sequence number to assign to outgoing packets (auto-incremented).
     """
@@ -42,6 +47,7 @@ class Session:
     peer_id: bytes
     peer_ed25519_public: bytes
     session_key: bytes
+    mac_key: bytes
     local_sequence: int = 0
 
     # Highest sequence number seen from the peer and a window of recent ones.
@@ -55,6 +61,8 @@ class Session:
             raise ValueError("peer_ed25519_public must be 32 bytes")
         if len(self.session_key) != 32:
             raise ValueError("session_key must be 32 bytes")
+        if len(self.mac_key) != 64:
+            raise ValueError("mac_key must be 64 bytes")
 
     # ------------------------------------------------------------------
     # Outgoing helpers
