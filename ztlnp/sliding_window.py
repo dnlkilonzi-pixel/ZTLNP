@@ -68,6 +68,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
 
 from ztlnp.exceptions import RetransmitError
+from ztlnp.packet import SEQUENCE_OFFSET
 from ztlnp.protocol import Protocol
 
 
@@ -304,7 +305,7 @@ class SlidingWindowChannel:
         else:
             wire = self._proto.send_data(plaintext)
 
-        seq = struct.unpack_from("!I", wire, 80)[0]
+        seq = struct.unpack_from("!I", wire, SEQUENCE_OFFSET)[0]
 
         wp = WindowedPacket(
             sequence=seq,

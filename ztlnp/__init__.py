@@ -80,7 +80,7 @@ random_jitter_ms / jitter_sleep -- inject send-timing randomness.
 CoverTraffic    -- generate dummy DATA packets at a fixed rate.
 """
 
-from ztlnp.packet import Packet, PacketType, PacketFlags, MAGIC, VERSION
+from ztlnp.packet import Packet, PacketType, PacketFlags, MAGIC, VERSION, SEQUENCE_OFFSET
 from ztlnp.crypto import CryptoEngine
 from ztlnp.device import Device
 from ztlnp.session import Session
@@ -135,7 +135,7 @@ from ztlnp.privacy import (
 
 __all__ = [
     # Core protocol
-    "Packet", "PacketType", "PacketFlags", "MAGIC", "VERSION",
+    "Packet", "PacketType", "PacketFlags", "MAGIC", "VERSION", "SEQUENCE_OFFSET",
     "CryptoEngine",
     "Device",
     "Session",

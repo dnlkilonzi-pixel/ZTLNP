@@ -52,6 +52,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Tuple
 
 from ztlnp.exceptions import RetransmitError
+from ztlnp.packet import SEQUENCE_OFFSET
 from ztlnp.protocol import Protocol
 
 
@@ -170,7 +171,7 @@ class ReliableChannel:
             wire = self._proto.send_data(plaintext)
 
         # Extract the sequence number from the wire bytes (offset 80, 4 bytes).
-        seq = struct.unpack_from("!I", wire, 80)[0]
+        seq = struct.unpack_from("!I", wire, SEQUENCE_OFFSET)[0]
 
         pending = PendingPacket(
             sequence=seq,

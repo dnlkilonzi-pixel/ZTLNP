@@ -221,7 +221,7 @@ def random_jitter_ms(max_jitter_ms: float) -> float:
     # Use os.urandom for an unpredictable float rather than random.random()
     # which uses a PRNG seeded from system entropy.
     raw = int.from_bytes(os.urandom(4), "big")
-    fraction = raw / 0xFFFFFFFF
+    fraction = raw / 0x100000000
     return fraction * max_jitter_ms
 
 

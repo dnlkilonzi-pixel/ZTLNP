@@ -172,7 +172,7 @@ class TrustStore:
         self._max_endorsement_depth = max_endorsement_depth
         self._records: Dict[bytes, TrustRecord] = {}
         # Blacklisted device IDs: explicitly distrusted regardless of any record.
-        self._blacklist: set = set()
+        self._blacklist: set[bytes] = set()
 
     # ------------------------------------------------------------------
     # Adding / updating records

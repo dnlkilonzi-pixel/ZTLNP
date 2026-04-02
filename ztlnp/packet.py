@@ -40,6 +40,10 @@ _HEADER_SIZE = struct.calcsize(_HEADER_FMT)  # 100 bytes
 _SIG_SIZE = 64  # Ed25519 signature
 BROADCAST_ID: bytes = b"\x00" * 32
 
+# Byte offset of the 4-byte sequence number field within a serialised packet.
+# Used by the ARQ channels to extract the sequence number from raw wire bytes.
+SEQUENCE_OFFSET: int = 80
+
 
 class PacketType(IntEnum):
     HELLO = 0x01            # Advertise identity + ephemeral public key
