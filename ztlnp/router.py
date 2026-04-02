@@ -197,11 +197,27 @@ class Router:
         self,
         local_device_id: bytes,
         route_table: Optional[RouteTable] = None,
+        max_advertised_trust: float = 0.95,
     ) -> None:
+        """
+        Parameters
+        ----------
+        local_device_id:
+            32-byte identity of the local device.
+        route_table:
+            Optional existing :class:`RouteTable`.  A fresh one is created if
+            not supplied.
+        max_advertised_trust:
+            Hard cap on the trust score that any peer advertisement is allowed
+            to contribute.  A malicious node claiming trust_score=1.0 for a
+            multi-hop path is clamped to this value, limiting route-poisoning
+            and Sybil trust-inflation attacks.  Default: 0.95.
+        """
         if len(local_device_id) != 32:
             raise ValueError("local_device_id must be 32 bytes")
         self._local_id = local_device_id
         self._table = route_table or RouteTable()
+        self._max_advertised_trust = max(0.0, min(1.0, max_advertised_trust))
 
     # ------------------------------------------------------------------
     # Route management
@@ -355,6 +371,14 @@ class Router:
         """
         Parse a ROUTE_ANNOUNCE payload and update the route table.
 
+        Trust-poisoning mitigations applied here:
+
+        * ``sender_trust_score`` is clamped to ``max_advertised_trust`` before
+          any per-hop decay is calculated, so a malicious peer cannot inflate
+          advertised trust scores beyond the cap.
+        * Per-hop trust decay of 10% (``0.9 ** hop_count``) further attenuates
+          scores for multi-hop paths.
+
         Parameters
         ----------
         payload:
@@ -364,8 +388,8 @@ class Router:
         via_addr:
             Transport-level address of the announcing device.
         sender_trust_score:
-            Trust score of the sender (used to compute path trust scores for
-            multi-hop routes).
+            Trust score of the sender (0.0–1.0) as assessed by the local
+            device.  Clamped to ``max_advertised_trust`` to resist inflation.
 
         Returns
         -------
@@ -378,14 +402,18 @@ class Router:
                 f"of {self._ENTRY_SIZE}"
             )
 
+        # Cap the sender's trust score — never allow a peer to advertise
+        # more trust than our local cap allows.
+        capped_sender_trust = min(sender_trust_score, self._max_advertised_trust)
+
         updated: List[RouteEntry] = []
         for offset in range(0, len(payload), self._ENTRY_SIZE):
             dev_id, hop_count = struct.unpack_from(self._ENTRY_FMT, payload, offset)
             if dev_id == self._local_id:
                 continue  # Never create a route to ourselves.
 
-            # Path trust decays slightly with each additional hop.
-            path_trust = sender_trust_score * (0.9 ** hop_count)
+            # Path trust decays with each additional hop.
+            path_trust = capped_sender_trust * (0.9 ** hop_count)
             entry = RouteEntry(
                 device_id=dev_id,
                 transport=via_transport,
@@ -397,6 +425,11 @@ class Router:
             updated.append(entry)
 
         return updated
+
+    @property
+    def max_advertised_trust(self) -> float:
+        """The trust cap applied to all peer route advertisements."""
+        return self._max_advertised_trust
 
     @property
     def local_device_id(self) -> bytes:

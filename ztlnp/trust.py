@@ -109,6 +109,9 @@ class TrustRecord:
     endorsers:
         Device IDs of peers that issued web-of-trust endorsements for this
         record.
+    endorsement_depth:
+        Web-of-trust chain depth (0 = directly VERIFIED, 1 = endorsed by a
+        VERIFIED peer, 2 = endorsed by a depth-1 peer, …).
     added_at:
         Unix timestamp (float) when the record was created.
     """
@@ -117,6 +120,7 @@ class TrustRecord:
     ed25519_public: bytes
     trust_level: TrustLevel = TrustLevel.TOFU
     endorsers: List[bytes] = field(default_factory=list)
+    endorsement_depth: int = 0
     added_at: float = field(default_factory=time.time)
 
     def __post_init__(self) -> None:
@@ -149,16 +153,26 @@ class TrustStore:
     min_trust:
         Minimum :class:`TrustLevel` required for a device to be considered
         trusted.  Defaults to :attr:`TrustLevel.TOFU`.
+    max_endorsement_depth:
+        Maximum web-of-trust chain depth allowed.  Depth 0 = directly
+        VERIFIED, depth 1 = endorsed by a VERIFIED peer, depth 2 = endorsed
+        by a depth-1 peer, and so on.  Deeper chains are rejected with
+        :class:`~ztlnp.exceptions.TrustPoisoningError` to limit trust-chain
+        amplification attacks.  Default: 3.
     """
 
     def __init__(
         self,
         allow_tofu: bool = True,
         min_trust: TrustLevel = TrustLevel.TOFU,
+        max_endorsement_depth: int = 3,
     ) -> None:
         self._allow_tofu = allow_tofu
         self._min_trust = min_trust
+        self._max_endorsement_depth = max_endorsement_depth
         self._records: Dict[bytes, TrustRecord] = {}
+        # Blacklisted device IDs: explicitly distrusted regardless of any record.
+        self._blacklist: set = set()
 
     # ------------------------------------------------------------------
     # Adding / updating records
@@ -207,13 +221,38 @@ class TrustStore:
 
     def is_trusted(self, device_id: bytes) -> bool:
         """
-        Return ``True`` if *device_id* is known and meets the store's minimum
-        trust level.
+        Return ``True`` if *device_id* is known, meets the store's minimum
+        trust level, and is **not** blacklisted.
         """
+        if device_id in self._blacklist:
+            return False
         record = self._records.get(device_id)
         if record is None:
             return False
         return record.trust_level >= self._min_trust
+
+    def distrust(self, device_id: bytes) -> None:
+        """
+        Actively blacklist *device_id*.
+
+        After this call :meth:`is_trusted` will return ``False`` for the given
+        device even if a trust record exists.  Use this to respond to detected
+        Sybil nodes or route-poisoning attacks.
+
+        Parameters
+        ----------
+        device_id:
+            32-byte identity to blacklist.
+        """
+        self._blacklist.add(device_id)
+
+    def is_blacklisted(self, device_id: bytes) -> bool:
+        """Return ``True`` if *device_id* has been explicitly distrusted."""
+        return device_id in self._blacklist
+
+    def remove_blacklist(self, device_id: bytes) -> None:
+        """Remove *device_id* from the blacklist (e.g. after investigation)."""
+        self._blacklist.discard(device_id)
 
     def get_public_key(self, device_id: bytes) -> bytes:
         """
@@ -348,6 +387,16 @@ class TrustStore:
                 f"(level: {endorser_record.trust_level.name})"
             )
 
+        # Endorsement depth check — prevent unbounded chain amplification.
+        new_depth = endorser_record.endorsement_depth + 1
+        if new_depth > self._max_endorsement_depth:
+            from ztlnp.exceptions import TrustPoisoningError
+            raise TrustPoisoningError(
+                f"Endorsement chain depth {new_depth} exceeds "
+                f"max_endorsement_depth={self._max_endorsement_depth}. "
+                "Possible trust-chain amplification attack."
+            )
+
         body = endorsement_bytes[:_ENDORSEMENT_BODY_SIZE]
         sig = endorsement_bytes[_ENDORSEMENT_BODY_SIZE:]
 
@@ -368,6 +417,8 @@ class TrustStore:
         record = self.add(target_ed25519_pub, TrustLevel.ENDORSED)
         if endorser_device_id not in record.endorsers:
             record.endorsers.append(endorser_device_id)
+        # Set endorsement depth on the target.
+        record.endorsement_depth = new_depth
         return record
 
     def all_records(self) -> List[TrustRecord]:

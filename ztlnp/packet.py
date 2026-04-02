@@ -50,6 +50,7 @@ class PacketType(IntEnum):
     BYE = 0x06              # Graceful session teardown
     ROUTE_ANNOUNCE = 0x07   # Mesh: advertise reachable device IDs
     TRUST_ENDORSE = 0x08    # Web-of-trust: signed endorsement of a peer
+    KEY_ROTATE = 0x09       # Forward-secure identity key rotation
 
 
 class PacketFlags(IntEnum):
@@ -57,6 +58,7 @@ class PacketFlags(IntEnum):
     ENCRYPTED = 0x0001   # Payload is AES-256-GCM ciphertext
     BROADCAST = 0x0002   # Addressed to all peers (recipient_id is all-zeros)
     MAC_AUTH = 0x0004    # Signature field carries HMAC-SHA-512 (not Ed25519)
+    PADDING = 0x0008     # Payload contains trailing padding bytes (privacy)
 
 
 @dataclass

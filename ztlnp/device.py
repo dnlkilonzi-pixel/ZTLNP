@@ -66,8 +66,52 @@ class Device:
         return self._identity_public_bytes
 
     # ------------------------------------------------------------------
-    # Key-exchange state management
+    # Forward-secure key rotation
     # ------------------------------------------------------------------
+
+    def rotate_key(self) -> "KeyTransition":  # noqa: F821
+        """
+        Rotate this device's Ed25519 identity key.
+
+        Generates a fresh Ed25519 key pair, replaces the device's identity
+        with it, and returns a signed :class:`~ztlnp.identity.KeyTransition`
+        blob that peers can use to migrate their trust records.
+
+        The returned transition is signed with the **old** private key, so
+        peers that already trust this device can verify and accept it without
+        any additional out-of-band interaction.
+
+        Returns
+        -------
+        KeyTransition
+            Signed transition blob ready to distribute (e.g. as the payload of
+            a ``KEY_ROTATE`` packet).
+
+        Notes
+        -----
+        Existing sessions are **not** invalidated by a key rotation.  The
+        session key was derived from an X25519 exchange that already completed;
+        it is independent of the long-term Ed25519 identity key.  New
+        handshakes after the rotation will use the new identity.
+        """
+        from ztlnp.identity import create_key_transition
+
+        old_private = self._identity_private
+        old_device_id = self.device_id
+
+        # Generate fresh identity key pair.
+        new_private, new_pub = CryptoEngine.generate_identity_keypair()
+
+        # Build the signed transition.
+        transition = create_key_transition(old_private, old_device_id, new_pub)
+
+        # Swap in the new key material.
+        self._identity_private = new_private
+        self._identity_public_bytes = new_pub
+        self.device_id = hashlib.sha256(new_pub).digest()
+
+        return transition
+
 
     def register_pending_peer(self, peer_id: bytes, peer_ed25519_public: bytes) -> None:
         """

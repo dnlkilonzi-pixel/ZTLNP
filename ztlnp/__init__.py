@@ -16,9 +16,12 @@ Key properties:
   endorsements.
 - The protocol is transport-agnostic (UDP, in-process, BLE, LoRa, etc.).
 - Mesh routing: packets are forwarded by identity, not by IP.
-- Reliable delivery: stop-and-wait ARQ with exponential-backoff retransmission.
+- Reliable delivery: stop-and-wait ARQ or sliding-window ARQ with SACK.
 - Performance: DATA packets in established sessions may use HMAC-SHA-512 instead
   of Ed25519 (~10–40× faster) via the MAC_AUTH flag.
+- Forward-secure identity rotation: signed key transitions preserve trust chains.
+- Route-poisoning defence: trust caps, endorsement depth limits, blacklisting.
+- Traffic analysis resistance: payload padding, timing jitter, cover traffic.
 
 Public API
 ----------
@@ -48,14 +51,33 @@ TransportTimeout / TransportClosed  -- transport exceptions.
 
 Routing / mesh
 --------------
-Router       -- identity-based packet forwarding.
+Router       -- identity-based packet forwarding with trust-poisoning defence.
 RouteTable   -- route collection with best-route selection.
 RouteEntry   -- single route record (transport, hop_count, trust_score, latency).
 
 Reliability
 -----------
-ReliableChannel  -- stop-and-wait ARQ with exponential-backoff retransmission.
-PendingPacket    -- an in-flight (unacknowledged) DATA packet.
+ReliableChannel      -- stop-and-wait ARQ with exponential-backoff retransmission.
+PendingPacket        -- an in-flight (unacknowledged) DATA packet (stop-and-wait).
+SlidingWindowChannel -- sliding-window ARQ with SACK; much higher throughput.
+SackFrame            -- selective-ACK state frame.
+WindowedPacket       -- an in-flight packet in the sliding-window send buffer.
+
+Identity rotation
+-----------------
+KeyTransition   -- signed blob committing a device to a new Ed25519 key.
+RotationManager -- validates and applies key transitions to a TrustStore.
+RotationRecord  -- a single rotation history entry.
+create_key_transition -- helper to sign a new KeyTransition.
+Device.rotate_key     -- rotate this device's identity key.
+
+Privacy
+-------
+PaddingStrategy -- enum: NONE / FIXED / RANDOM / BLOCK.
+pad_to_size     -- append padding to a plaintext before encryption.
+strip_padding   -- remove padding after decryption.
+random_jitter_ms / jitter_sleep -- inject send-timing randomness.
+CoverTraffic    -- generate dummy DATA packets at a fixed rate.
 """
 
 from ztlnp.packet import Packet, PacketType, PacketFlags, MAGIC, VERSION
@@ -74,6 +96,8 @@ from ztlnp.exceptions import (
     TrustError,
     RoutingError,
     RetransmitError,
+    KeyRotationError,
+    TrustPoisoningError,
 )
 from ztlnp.trust import (
     TrustLevel,
@@ -93,6 +117,21 @@ from ztlnp.transport import (
 )
 from ztlnp.router import Router, RouteTable, RouteEntry
 from ztlnp.reliability import ReliableChannel, PendingPacket
+from ztlnp.sliding_window import SlidingWindowChannel, SackFrame, WindowedPacket
+from ztlnp.identity import (
+    KeyTransition,
+    RotationManager,
+    RotationRecord,
+    create_key_transition,
+)
+from ztlnp.privacy import (
+    PaddingStrategy,
+    pad_to_size,
+    strip_padding,
+    random_jitter_ms,
+    jitter_sleep,
+    CoverTraffic,
+)
 
 __all__ = [
     # Core protocol
@@ -106,6 +145,7 @@ __all__ = [
     "SignatureVerificationError", "ReplayAttackError",
     "SessionNotFoundError", "HandshakeError",
     "TrustError", "RoutingError", "RetransmitError",
+    "KeyRotationError", "TrustPoisoningError",
     # Trust bootstrap
     "TrustLevel", "TrustRecord", "TrustStore",
     "fingerprint_of", "encode_qr_payload", "parse_qr_payload",
@@ -115,7 +155,14 @@ __all__ = [
     "TransportTimeout", "TransportClosed",
     # Routing
     "Router", "RouteTable", "RouteEntry",
-    # Reliability
+    # Reliability (stop-and-wait)
     "ReliableChannel", "PendingPacket",
+    # Reliability (sliding window)
+    "SlidingWindowChannel", "SackFrame", "WindowedPacket",
+    # Identity rotation
+    "KeyTransition", "RotationManager", "RotationRecord", "create_key_transition",
+    # Privacy / traffic analysis resistance
+    "PaddingStrategy", "pad_to_size", "strip_padding",
+    "random_jitter_ms", "jitter_sleep", "CoverTraffic",
 ]
 

@@ -41,3 +41,11 @@ class RoutingError(ZTLNPError):
 
 class RetransmitError(ZTLNPError):
     """Reliable delivery failed after exhausting all retransmission attempts."""
+
+
+class KeyRotationError(ZTLNPError):
+    """A key-rotation transition was invalid or could not be applied."""
+
+
+class TrustPoisoningError(ZTLNPError):
+    """A trust or routing operation was rejected due to poisoning-defence rules."""
