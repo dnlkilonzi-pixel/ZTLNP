@@ -46,6 +46,7 @@ Notes
 
 from __future__ import annotations
 
+import struct
 import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Tuple
@@ -169,7 +170,6 @@ class ReliableChannel:
             wire = self._proto.send_data(plaintext)
 
         # Extract the sequence number from the wire bytes (offset 80, 4 bytes).
-        import struct
         seq = struct.unpack_from("!I", wire, 80)[0]
 
         pending = PendingPacket(

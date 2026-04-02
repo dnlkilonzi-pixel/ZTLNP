@@ -199,8 +199,8 @@ class UdpTransport(Transport):
     -------
     ::
 
-        server = UdpTransport(("0.0.0.0", 9000))
-        client = UdpTransport(("0.0.0.0", 0))
+        server = UdpTransport(("127.0.0.1", 9000))
+        client = UdpTransport(("127.0.0.1", 0))
 
         client.send(b"127.0.0.1:9000", b"hello")
         src, data = server.recv()
@@ -213,7 +213,7 @@ class UdpTransport(Transport):
 
     def __init__(
         self,
-        bind_addr: Tuple[str, int] = ("", 0),
+        bind_addr: Tuple[str, int] = ("127.0.0.1", 0),
         max_datagram: int = 65_535,
     ) -> None:
         self._max_datagram = max_datagram

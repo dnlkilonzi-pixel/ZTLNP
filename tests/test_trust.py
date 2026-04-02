@@ -142,7 +142,7 @@ class TestFingerprint:
         _, pub, _ = make_device()
         fp = fingerprint_of(pub)
         groups = fp.split(":")
-        assert len(groups) == 8
+        assert len(groups) == 16
         assert all(len(g) == 4 for g in groups)
         assert fp == fp.upper()
 

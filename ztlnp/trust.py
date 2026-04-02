@@ -30,10 +30,10 @@ ENDORSED
 Fingerprint format
 ------------------
 A device fingerprint is the SHA-256 of the raw Ed25519 public key bytes,
-formatted as eight groups of four uppercase hex characters separated by
+formatted as sixteen groups of four uppercase hex characters separated by
 colons::
 
-    A1B2:C3D4:E5F6:0A1B:2C3D:4E5F:6A7B:8C9D
+    A1B2:C3D4:E5F6:0A1B:2C3D:4E5F:6A7B:8C9D:1E2F:3A4B:5C6D:7E8F:90AB:CDEF:0123:4567
 
 This is intentionally similar to SSH host-key fingerprints so that operators
 already familiar with SSH feel at home.
@@ -384,15 +384,15 @@ def fingerprint_of(ed25519_public: bytes) -> str:
     Compute the human-readable SHA-256 fingerprint of an Ed25519 public key.
 
     The fingerprint is the SHA-256 hash of the raw public key bytes, formatted
-    as eight groups of four uppercase hex characters separated by colons::
+    as sixteen groups of four uppercase hex characters separated by colons::
 
-        A1B2:C3D4:E5F6:0A1B:2C3D:4E5F:6A7B:8C9D
+        A1B2:C3D4:E5F6:0A1B:2C3D:4E5F:6A7B:8C9D:1E2F:3A4B:5C6D:7E8F:90AB:CDEF:0123:4567
 
-    This is 39 characters long and suitable for display in a terminal or QR
+    This is 79 characters long and suitable for display in a terminal or QR
     code verification UI.
     """
     digest = hashlib.sha256(ed25519_public).hexdigest().upper()
-    return ":".join(digest[i : i + 4] for i in range(0, 32, 4))
+    return ":".join(digest[i : i + 4] for i in range(0, 64, 4))
 
 
 def encode_qr_payload(device_id: bytes, ed25519_public: bytes) -> str:
